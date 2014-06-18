@@ -1,0 +1,111 @@
+---
+title: "PrMachLearn"
+output:
+  html_document:
+    fig_caption: yes
+---
+
+```{r, eval = FALSE}
+urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(urlTrain, "train.csv", method = "curl")
+download.file(urlTest, "test.csv", method = "curl")
+```
+
+Now we load the required packages, set the seed, the load the training dataset and split it into a training set (70% of data) and a validation set (30% of data).
+```{r}
+library(RColorBrewer); library(ggplot2); library(lattice)
+library(caret); library(reshape2); library(randomForest)
+set.seed(7865)
+```
+
+```{r, cache = TRUE}
+training <- read.csv("train.csv")
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+train <- training[inTrain,]
+validate <- training[-inTrain,]
+```
+
+We're going to use only the `train` set to construct our prediction algorithm..
+After taking a look at the data we can observe that quite a few variables have most or all of their observations missing. We can also see that those observations that are present are evenly distributed among the 5 `classe` types, which means that the absence of these signals is not due to the nature of exercise. We will not use these variables for prediction.
+
+Additionally, some variables, such as the name of the subject or timestamp, may be good predictors within the sample, but may introduce errors when evaluating new data. We will remove them as well and keep only the variables that describe signals and have no missing observations.
+
+```{r}
+exclude <- c(1:7, 12:36, 50:59, 69:83, 87:101, 103:112, 125:139, 141:150)
+train <- train[,-exclude]
+```
+
+However 52 predictors is qute a lot and we would like to find a way to reduce this number. So next thing we notice is that there are 4 distinct groups among the 52 variables: signals related to *belt*, *arm*, *forearm* and *dumbbell*.
+
+We will take a closer look at one of the groups first, to see if perhaps there is a pattern.
+We extract only the variables that contain `belt` in their names, bind the `classe` variable, normalize the data and then melt the new dataset.
+```{r, cache = TRUE}
+beltvars <- grepl("belt", names(train))
+trainingBelt <- train[,beltvars]
+trainingBelt <- cbind(trainingBelt, 
+                      classe = train$classe, 
+                      index = 1:nrow(trainingBelt))
+beltMelt <- melt(trainingBelt, id.vars = c(14, 15))
+```
+We can now plot distributions of all the variables related to *belt* divided by `classe`.
+```{r, fig.width = 12, fig.height = 8}
+ggplot(beltMelt, aes(classe, value)) +
+        facet_wrap(~ variable, nrow = 3, ncol = 5, scales = "free") +
+        geom_boxplot(aes(fill = classe)) +
+        scale_fill_manual(values = brewer.pal(5,"Spectral")) +
+        theme_bw()
+```
+We can observe that while the distributions of all variables differ between the 5 exercise types, they are not vastly different. In most of them one or two `classe` distributions are significantly different from the others, but there is no one single variable in this group that can definitely predict the exercise type. All of them appear to contain important information about the exercise, and yet each is too weak a predictor on its own.
+
+Inspecting variables that have *arm*, *forearm* and *dumbbell* in their names in the same way yields similar results.
+
+This indicates that distributions of all the signals in the dataset differ more or less noticeably between the exercide groups, but each of them is a weak predictor of exercise type, and therefor in order to reduce the number of predictors it may be beneficial to use PCA.
+
+```{r, cache = TRUE}
+preProc <- preProcess(train[,-53], method = "pca", thresh = 0.9)
+trainPCA <- predict(preProc, train[,-53])
+```
+
+We are now down to 18 variables instead of 52 with 90% of variance captured.
+
+I have tried using a decision tree algorithm for prediction, but the accuracy eneded up to be very low (about 40%), so I decided to use a random forest instead, which should be more accurate.
+```{r, cache = TRUE}
+modFit <- train(train$classe ~ ., 
+                method = "rf", 
+                data = trainPCA, 
+                trControl = trainControl(method = "cv", number = 4),
+                allowParallel = T)
+```
+Now that we have our model we can check the accuracy.
+```{r}
+trainPR <- predict(modFit, trainPCA)
+confusionMatrix(trainPR, train$classe)$overall
+```
+The accuracy is 1, which means that all predictions on the training set turned up to be accurate, and thus the in-sample error is zero.
+
+However the out-of-sample error is always larger than the in-sample error. We will use our validation data set to estimate it.
+
+First we run it through the same transformations as the training set.
+We will use the `preProc` object created with the training set to perform PCA on the validation set.
+```{r, cache = TRUE}
+validate <- validate[,-exclude]
+validatePCA <- predict(preProc, validate[,-53])
+```
+Now we can check the accuracy of the prediction algorithm:
+```{r, cache = TRUE}
+validatePR <- predict(modFit, validatePCA)
+confusionMatrix(validatePR, validate$classe)$overall
+```
+The 95% confidence interval for the accuracy is between 0.9556 and 0.9657, and thus we can be 95% sure that the out-of-sample error of our model is between 3.4% and 4.4%.
+
+Finally we can apply our model to predict the `classe` values on the test set, after performing the required data transformations on it.
+
+```{r, cache = TRUE}
+test <- read.csv("test.csv")
+test <- test[,-exclude]
+testPCA <- predict(preProc, test)
+testPR <- predict(modFit, testPCA)
+testPR
+```
+
