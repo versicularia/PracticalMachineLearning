@@ -1,0 +1,158 @@
+---
+output:
+  knitrBootstrap::bootstrap_document:
+    title: "Predicting Manner of Exercise from Accelerometers Data"
+    theme: default
+    highlight: Solarized - Light
+    theme.chooser: FALSE
+    highlight.chooser: FALSE
+    menu: FALSE
+---
+# Predicting Manner of Exercise from Accelerometers Data
+This is a wrteup part of project for [Coursera Practical Machine Learning course](https://class.coursera.org/predmachlearn-002).
+
+Data from WLE dataset (source: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har)) is used to predict the manner in which the subjects performed the weight lifting exercise. 
+
+We will use the `training` dataset to explore the data and train the prediction algorithm, and then the `test` dataset to predict the `classe` variable for the 20 test cases.
+
+```{r, eval = FALSE}
+urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(urlTrain, "train.csv", method = "curl")
+download.file(urlTest, "test.csv", method = "curl")
+```
+
+## Loading and Splicing Data
+First we load the required packages and set the seed to ensure reproducibility.
+
+```{r, message = FALSE}
+library(RColorBrewer); library(ggplot2); library(lattice)
+library(caret); library(reshape2); library(randomForest)
+set.seed(7865)
+```
+
+Next, we load the training dataset and split it into a **training** set (70% of data) and a **validation** set (30% of data).
+
+```{r, cache = TRUE}
+training <- read.csv("train.csv")
+inTrain <- createDataPartition(training$classe, p = 0.7, list = FALSE)
+train <- training[inTrain,]
+validate <- training[-inTrain,]
+```
+
+## Exploratory Data Analysis
+We're going to use only the `train` set to construct our prediction algorithm.
+
+### Excluding Variables
+After taking a look at the data we can observe that quite a few variables have most or all of their observations missing (`NA` values or emprty strings). We can also see that those observations that are present vore tehse variables are evenly distributed among the 5 `classe` types, which means that the absence of these signals is not due to the nature of exercise. We will not use these variables for prediction.
+
+Additionally, some variables, such as the **name** of the subject or **timestamp**, may be good predictors within the sample, but may introduce errors when evaluating new data. We will remove them as well and keep only the variables that describe accelerometers signals and have no missing observations.
+
+```{r}
+exclude <- c(1:7, 12:36, 50:59, 69:83, 87:101, 103:112, 125:139, 141:150)
+train <- train[,-exclude]
+dim(train)
+```
+
+We end up with 52 predictors which is still quite a lot. We would like to find a way to reduce this number.
+
+So next thing we notice is that there are 4 distinct groups among the 52 variables: signals obtained from accelerometers located on the *belt*, *arm*, *forearm* and *dumbbell* of the subject contain these keywords in the variable names.
+
+### Inspecting Variables
+We will take a closer look at these groups, to see if perhaps one or a few signals exhibit a strong pattern based on which the excersice manner can be identified.
+
+We will define a custom `inspect` function that will extract only the variables that contain a specified keyword in their names, bind the `classe` variable to them and then melt the new dataset. Afterwards it will plot the data faceted by variables and colored by `classe` level.
+
+```{r, cache = TRUE}
+inspect <- function(name){
+vars <- grepl(name, names(train))
+subset <- train[,vars]
+subset <- cbind(subset, classe = train$classe)
+subsetmelt <- melt(subset, id.vars = "classe")
+ggplot(subsetmelt, aes(classe, value)) +
+        facet_wrap(~ variable, nrow = 3, ncol = 5, scales = "free") +
+        geom_boxplot(aes(fill = classe)) +
+        scale_fill_manual(values = brewer.pal(5,"Spectral")) +
+        theme_bw()
+}
+```
+
+We can now plot distributions of all the variables related to various accelerometer locations and divided by `classe`.
+```{r, fig.width = 12, fig.height = 8, bootstrap.thumbnail = FALSE}
+inspect("belt")
+inspect("_arm")
+inspect("forearm")
+inspect("dumbbell")
+```
+
+We can observe that distributions of all the signals in the dataset differ more or less noticeably between the exercise types. However, even though `classe` level `A` (corresponding to correct exercise manner) is often significantly different from the other types, it is usually harder to differentiate between the remaining 4 levels (correspnding to various mistakes).
+
+Additionally there are extreme outliers in some of the variables, the nature of which cannot be identified given the data that we have.
+
+
+We can thus conclude, that while most signals contain important informatin about the exercise manner, each of them is a weak predictor on its own. It does not appear possible to manually select a few variables for prediction, and therefor in order to reduce the number of predictors it may be beneficial to use **PCA**.
+
+## Principal Components Analysis
+```{r, cache = TRUE}
+preProc <- preProcess(train[,-53], method = "pca", thresh = 0.9)
+preProc
+```
+We are now down to 18 variables instead of 52 with 90% of variance captured.
+
+```{r}
+trainPCA <- predict(preProc, train[,-53])
+```
+
+## Fitting a Model and Checking In-Sample Error
+I have initially tried using a decision tree algorithm for prediction, but the accuracy eneded up to be very low (about 40%), so I decided to use a random forest instead, which should be more accurate.
+
+```{r, cache = TRUE}
+modFit <- train(train$classe ~ ., 
+                method = "rf", 
+                data = trainPCA, 
+                trControl = trainControl(method = "cv", number = 4),
+                allowParallel = T)
+```
+
+Now that we have our model we can check the accuracy.
+```{r}
+trainPR <- predict(modFit, trainPCA)
+confusionMatrix(trainPR, train$classe)$overall
+```
+
+The accuracy is 1, which means that all predictions on the training set turned up to be accurate, and thus **the in-sample error is zero**.
+
+## Estimating the Out-of-Sample Error
+Our in-sample error was encouraging, however the out-of-sample error is normally larger than the in-sample error. We will use our **validation** data set to estimate it.
+
+```{r, cache = TRUE}
+validate <- validate[,-exclude]
+validatePCA <- predict(preProc, validate[,-53])
+validatePR <- predict(modFit, validatePCA)
+check <- confusionMatrix(validatePR, validate$classe)
+check$overall
+```
+
+The 95% confidence interval for the accuracy is between `r check$overall[2][[1]]` and `r check$overall[3][[1]]`, and thus we can be **95% confident that the out-of-sample error of our model is between `r (1 - check$overall[2][[1]])*100`% and `r (1 - check$overall[3][[1]])*100`%**.
+
+## Predicting on the Test Dataset
+Finally we apply our model to predict the `classe` values on the **test** set, after performing the required data transformations on it.
+
+```{r, cache = TRUE}
+test <- read.csv("test.csv")
+test <- test[,-exclude]
+testPCA <- predict(preProc, test[,-53])
+testPR <- predict(modFit, testPCA)
+testPR
+```
+
+These values were considered 100% accurate in the submission part of the project, so we can conclude that the prediction model performance is acceptable.
+
+## References
+1. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201). Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+2. Dataset source: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har)
+
+## Session info
+```{r}
+sessionInfo()
+```
