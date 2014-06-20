@@ -9,7 +9,7 @@ output:
     menu: FALSE
 ---
 # Predicting Manner of Exercise from Accelerometers Data
-This is a wrteup part of project for [Coursera Practical Machine Learning course](https://class.coursera.org/predmachlearn-002).
+This is a writeup part of project for [Coursera Practical Machine Learning course](https://class.coursera.org/predmachlearn-002).
 
 Data from WLE dataset (source: [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har)) is used to predict the manner in which the subjects performed the weight lifting exercise. 
 
@@ -44,7 +44,7 @@ validate <- training[-inTrain,]
 We're going to use only the `train` set to construct our prediction algorithm.
 
 ### Excluding Variables
-After taking a look at the data we can observe that quite a few variables have most or all of their observations missing (`NA` values or emprty strings). We can also see that those observations that are present vore tehse variables are evenly distributed among the 5 `classe` types, which means that the absence of these signals is not due to the nature of exercise. We will not use these variables for prediction.
+After taking a look at the data we can observe that quite a few variables have most or all of their observations missing (`NA` values or empty strings). We can also see that those observations that are present for these variables are evenly distributed among the 5 `classe` types, which indicates that the absence of these signals is not due to the nature of exercise. We will not use these variables for prediction.
 
 Additionally, some variables, such as the **name** of the subject or **timestamp**, may be good predictors within the sample, but may introduce errors when evaluating new data. We will remove them as well and keep only the variables that describe accelerometers signals and have no missing observations.
 
@@ -85,7 +85,7 @@ inspect("forearm")
 inspect("dumbbell")
 ```
 
-We can observe that distributions of all the signals in the dataset differ more or less noticeably between the exercise types. However, even though `classe` level `A` (corresponding to correct exercise manner) is often significantly different from the other types, it is usually harder to differentiate between the remaining 4 levels (correspnding to various mistakes).
+We can observe that distributions of all the signals in the dataset differ more or less noticeably between the exercise types. However, even though `classe` level `A` (corresponding to correct exercise manner) is often significantly different from the other types, it is usually harder to differentiate between the remaining 4 levels (corresponding to various mistakes).
 
 Additionally there are extreme outliers in some of the variables, the nature of which cannot be identified given the data that we have.
 
